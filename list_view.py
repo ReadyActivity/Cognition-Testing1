@@ -1,115 +1,95 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-import pylsl
+from pylsl import StreamInlet, resolve_stream
 import time
 
-class EEGViewer:
-    def __init__(self):
-        # Find EEG stream
-        print("Looking for EEG stream...")
-        streams = pylsl.resolve_stream('type', 'EEG')
-        
-        while not streams:
-            print("Waiting for EEG stream...")
-            time.sleep(1)
-            streams = pylsl.resolve_stream('type', 'EEG')
-        
-        self.inlet = pylsl.StreamInlet(streams[0])
-        
-        # Get stream info
-        info = self.inlet.info()
-        self.channel_count = info.channel_count()
-        
-        # Get channel names
-        ch = info.desc().child("channels").child("channel")
-        self.channel_names = []
-        for i in range(self.channel_count):
-            self.channel_names.append(ch.child_value("label"))
-            ch = ch.next_sibling()
-        
-        # If channel names are not available, use default names
-        if not self.channel_names:
-            self.channel_names = ['TP9', 'AF7', 'AF8', 'TP10', 'Right AUX']
-        
-        # Initialize data buffer (5 seconds of data at 256Hz)
-        self.buffer_size = 256 * 5
-        self.data_buffer = np.zeros((self.buffer_size, self.channel_count))
-        
-        # Create figure and subplots
-        self.fig, self.axes = plt.subplots(self.channel_count, 1, figsize=(12, 8), sharex=True)
-        if self.channel_count == 1:
-            self.axes = [self.axes]
-        
-        self.fig.suptitle('Live EEG Data')
-        self.lines = []
-        
-        # Initialize plots
-        for i, ax in enumerate(self.axes):
-            line, = ax.plot(np.zeros(self.buffer_size))
-            self.lines.append(line)
-            ax.set_ylabel(f'{self.channel_names[i]} (μV)')
-            ax.grid(True)
-        
-        self.axes[-1].set_xlabel('Samples')
-        
-        # Add text for signal quality indicators
-        self.quality_text = self.fig.text(0.02, 0.98, '', transform=self.fig.transFigure, 
-                                        verticalalignment='top')
+def main():
+    # First resolve an EEG stream on the lab network
+    print("Looking for an EEG stream...")
+    streams = resolve_stream('type', 'EEG')
+    inlet = StreamInlet(streams[0])
     
-    def update(self, frame):
-        # Get chunk of data
-        data, timestamps = self.inlet.pull_chunk(timeout=0.0, 
-                                               max_samples=self.buffer_size)
-        
-        if data:
-            # Update buffer with new data
-            new_data = np.array(data)
-            samples_to_add = len(new_data)
+    # Get the stream info
+    info = inlet.info()
+    fs = int(info.nominal_srate())
+    channel_count = info.channel_count()
+    
+    # Get channel names
+    ch = info.desc().child("channels").child("channel")
+    channel_names = []
+    for i in range(channel_count):
+        channel_names.append(ch.child_value("label"))
+        ch = ch.next_sibling()
+    
+    if not channel_names:
+        channel_names = ['TP9', 'AF7', 'AF8', 'TP10', 'Right AUX']
+    
+    # Create the figure and axes
+    fig, axes = plt.subplots(channel_count, 1, figsize=(15, 10), sharex=True)
+    if channel_count == 1:
+        axes = [axes]
+    
+    # Set up the plots
+    window_size = 5  # 5 seconds of data
+    buffer_size = int(fs * window_size)
+    buffers = [np.zeros(buffer_size) for _ in range(channel_count)]
+    lines = []
+    
+    # Create a line for each channel
+    t = np.linspace(-window_size, 0, buffer_size)
+    for ax, name in zip(axes, channel_names):
+        line, = ax.plot(t, np.zeros(buffer_size))
+        lines.append(line)
+        ax.set_ylabel(f'{name} (μV)')
+        ax.grid(True)
+        ax.set_ylim(-100, 100)
+    
+    axes[-1].set_xlabel('Time (s)')
+    plt.tight_layout()
+    
+    # Update function for the plot
+    def update_plot():
+        try:
+            # Get chunk of data and timestamps
+            chunk, timestamps = inlet.pull_chunk()
             
-            if samples_to_add > 0:
-                # Roll buffer and add new data
-                self.data_buffer = np.roll(self.data_buffer, -samples_to_add, axis=0)
-                self.data_buffer[-samples_to_add:, :] = new_data
-                
-                # Update plots
-                for i, line in enumerate(self.lines):
-                    line.set_ydata(self.data_buffer[:, i])
+            if chunk:
+                chunk = np.array(chunk)
+                for ch_ix in range(channel_count):
+                    # Roll the buffer and add new data
+                    buffers[ch_ix] = np.roll(buffers[ch_ix], -len(chunk))
+                    buffers[ch_ix][-len(chunk):] = chunk[:, ch_ix]
                     
-                    # Auto-scale y-axis occasionally
-                    if frame % 30 == 0:
-                        self.axes[i].relim()
-                        self.axes[i].autoscale_view()
+                    # Update line
+                    lines[ch_ix].set_ydata(buffers[ch_ix])
+                    
+                    # Auto-scale y-axis (optional)
+                    if np.ptp(buffers[ch_ix]) > 0:
+                        margin = np.ptp(buffers[ch_ix]) * 0.1
+                        axes[ch_ix].set_ylim(
+                            np.min(buffers[ch_ix]) - margin,
+                            np.max(buffers[ch_ix]) + margin
+                        )
+                
+                plt.draw()
+                plt.pause(0.01)  # Small pause to allow the plot to update
+                
+            return True
         
-        # Update signal quality indicator (basic threshold-based)
-        quality_msg = "Signal Quality:\n"
-        for i, ch_name in enumerate(self.channel_names[:-1]):  # Exclude AUX channel
-            # Simple signal quality check based on amplitude
-            recent_data = self.data_buffer[-256:, i]  # Last second of data
-            if np.std(recent_data) < 1:
-                quality = "Poor"
-            elif np.std(recent_data) < 10:
-                quality = "Good"
-            else:
-                quality = "Excellent"
-            quality_msg += f"{ch_name}: {quality}\n"
-        
-        self.quality_text.set_text(quality_msg)
-        
-        return self.lines + [self.quality_text]
+        except KeyboardInterrupt:
+            return False
     
-    def run(self):
-        # Set up animation
-        self.anim = FuncAnimation(self.fig, self.update, interval=100, 
-                                blit=True)
-        
-        # Configure plot appearance
-        plt.tight_layout()
-        self.fig.subplots_adjust(right=0.85)  # Make room for signal quality
-        
-        # Show plot
-        plt.show()
+    print("Starting data visualization... Press Ctrl+C to stop")
+    plt.ion()  # Turn on interactive mode
+    
+    try:
+        while update_plot():
+            pass
+    except KeyboardInterrupt:
+        print("\nStopping visualization...")
+    finally:
+        plt.ioff()
+        plt.close('all')
 
 if __name__ == "__main__":
-    viewer = EEGViewer()
-    viewer.run()
+    main()
