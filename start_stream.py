@@ -5,7 +5,7 @@ def main():
 
     muses = list_muses()
     for muse in muses:
-        if muse['address'] == 'DD158D69-A103-9D19-3512-78E00C823F78':
+        if muse['name'] == 'Muse-C956':
             device = muse['address']
             print(muse, "Muse found")
             break

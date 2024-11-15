@@ -2,11 +2,7 @@ import time
 import pylsl
 import numpy as np
 import pandas as pd
-
-import time
-import pylsl
-import numpy as np
-import pandas as pd
+import matplotlib.pyplot as plt
 
 def collect_eeg_data(duration=60, chunk_size=12):
     """
@@ -36,19 +32,37 @@ def collect_eeg_data(duration=60, chunk_size=12):
     
     inlet = pylsl.StreamInlet(streams[0])
     
+    # Get stream info
+    info = inlet.info()
+    channel_count = info.channel_count()
+    
+    # Get channel names
+    ch = info.desc().child("channels").child("channel")
+    channel_names = []
+    for i in range(channel_count):
+        channel_names.append(ch.child_value("label"))
+        ch = ch.next_sibling()
+    
+    # If channel names are not available, use default names
+    if not channel_names:
+        channel_names = ['TP9', 'AF7', 'AF8', 'TP10', 'Right AUX']
+    
     # Initialize data collection
     eeg_data = []
-    channel_names = ['TP9', 'AF7', 'AF8', 'TP10']
     start_time = time.time()
     
     print(f"Starting data collection for {duration} seconds...")
+    print(f"Collecting data from {len(channel_names)} channels: {channel_names}")
     
     try:
         while (time.time() - start_time) < duration:
             data, timestamp = inlet.pull_chunk(timeout=1.0, 
                                              max_samples=chunk_size)
             if data:
+                # print(data)
                 eeg_data.extend(data)
+                plt.plot(data)
+                plt.show()
                 # Optional: Print a dot to show progress
                 print(".", end="", flush=True)
                 
@@ -76,10 +90,13 @@ def analyze_data(df):
     print("\nBasic Statistics:")
     print(df.describe())
     
-    # Calculate power bands (simple example)
+    # Calculate channel averages
     print("\nChannel Averages:")
     for channel in df.columns:
         print(f"{channel}: {df[channel].mean():.2f}")
+        
+    # Print data shape
+    print(f"\nData shape: {df.shape} (rows x columns)")
 
 def main():
     try:
