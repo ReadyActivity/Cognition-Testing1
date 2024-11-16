@@ -4,6 +4,7 @@ from pylsl import StreamInlet, resolve_stream
 import time
 from scipy import signal
 from datetime import datetime
+
 import os
 
 class EEGAnalyzer:
@@ -66,6 +67,31 @@ class EEGAnalyzer:
             # Calculate mean power in band
             band_powers[band_name] = np.mean(psd[mask])
         
+        # Calculate Alpha/Theta Ratio -- higher ratio: more alert
+        if 'Alpha' in band_powers and 'Theta' in band_powers:
+            ratio = band_powers['Alpha'] / band_powers['Theta']
+            band_powers['Alpha/Theta Ratio'] = ratio
+
+        # Calculate Alpha/Beta Ratio -- higher ratio: more relaxed
+        if 'Alpha' in band_powers and 'Beta' in band_powers:
+            ratio = band_powers['Alpha'] / band_powers['Beta']
+            band_powers['Alpha/Beta Ratio'] = ratio
+        
+        # Calculate Theta/Beta Ratio -- higher ratio: more distracted, lower ratio: more focused
+        if 'Theta' in band_powers and 'Beta' in band_powers:
+            ratio = band_powers['Theta'] / band_powers['Beta']
+            band_powers['Theta/Beta Ratio'] = ratio
+        
+        # Calculate Delta/Theta Ratio -- higher ratio: more sleepy
+        if 'Delta' in band_powers and 'Theta' in band_powers:
+            ratio = band_powers['Delta'] / band_powers['Theta']
+            band_powers['Delta/Theta Ratio'] = ratio
+        
+        # Calculate Gamma/Alpha Ratio -- higher ratio: more 
+        if 'Gamma' in band_powers and 'Alpha' in band_powers:
+            ratio = band_powers['Gamma'] / band_powers['Alpha']
+            band_powers['Gamma/Alpha Ratio'] = ratio
+        
         return band_powers
     
     def analyze_eeg(self):
@@ -103,6 +129,7 @@ class EEGAnalyzer:
         print(f"\nTimestamp: {results['timestamp']}")
         print("\nBand Powers (μV²):")
         
+        
         # Print band powers for each channel
         for channel, data in results['channels'].items():
             print(f"\n{channel}:")
@@ -135,25 +162,83 @@ class EEGAnalyzer:
                     if np.any(self.eeg_buffer):
                         results = self.analyze_eeg()
                         self.process_results(results)
+                        # Determine brain state
+                        self.determine_brain_state(results)
                         
                         # Here you can add your own analysis functions
                         # self.your_custom_analysis(results)
                 
-                time.sleep(0.1)  # Small pause to prevent overwhelming the CPU
+                time.sleep(0.5)  # Small pause to prevent overwhelming the CPU
                 
         except KeyboardInterrupt:
             print("\nStopping analysis...")
 
-def your_custom_analysis(eeg_data):
-    """
-    Add your own analysis functions here.
-    This is just an example template.
-    """
-    # Example: Calculate alpha/theta ratio
-    # alpha_power = ...
-    # theta_power = ...
-    # ratio = alpha_power / theta_power
-    pass
+    def determine_brain_state(self, results):
+        # Initialize brain state with descriptive levels
+        brain_state = {
+            "alertness_level": "",
+            "stress_level": "",
+            "fatigue_level": "",
+            "focus_level": ""
+        }
+
+        # Extract ratios for specific channels
+        band_powers_af7 = results['channels']['AF7']['band_powers']
+        band_powers_af8 = results['channels']['AF8']['band_powers']
+
+        # Compute average ratios across channels
+        ratios = {}
+        ratio_keys = [
+            'Alpha/Theta Ratio',  # Alertness
+            'Alpha/Beta Ratio',   # Relaxation/Stress
+            'Theta/Beta Ratio',   # Focus/Distraction
+            'Delta/Theta Ratio',  # Sleepiness
+            'Gamma/Alpha Ratio'   # Cognitive activity
+        ]
+        
+        for key in ratio_keys:
+            ratios[key] = (
+                band_powers_af7.get(key, 0) + band_powers_af8.get(key, 0)
+            ) / 2
+
+        # Determine alertness level (Alpha/Theta Ratio)
+        if ratios['Alpha/Theta Ratio'] < 1.5:
+            brain_state['alertness_level'] = "Relaxed"
+        elif 1.5 <= ratios['Alpha/Theta Ratio'] <= 2.5:
+            brain_state['alertness_level'] = "Moderately Alert"
+        else:
+            brain_state['alertness_level'] = "Highly Alert"
+
+        # Determine stress level (Alpha/Beta Ratio)
+        if ratios['Alpha/Beta Ratio'] > 0.3:
+            brain_state['stress_level'] = "Low Stress"
+        elif 0.1 <= ratios['Alpha/Beta Ratio'] <= 0.3:
+            brain_state['stress_level'] = "Moderate Stress"
+        else:
+            brain_state['stress_level'] = "High Stress"
+
+        # Determine fatigue level (Delta/Theta Ratio)
+        if ratios['Delta/Theta Ratio'] > 10:
+            brain_state['fatigue_level'] = "Sleepy"
+        elif 4 <= ratios['Delta/Theta Ratio'] <= 10:
+            brain_state['fatigue_level'] = "Tired"
+        else:
+            brain_state['fatigue_level'] = "Awake"
+
+        # Determine focus level (Theta/Beta Ratio)
+        if ratios['Theta/Beta Ratio'] > 2:
+            brain_state['focus_level'] = "Distracted"
+        elif 1 <= ratios['Theta/Beta Ratio'] <= 2:
+            brain_state['focus_level'] = "Moderately Focused"
+        else:
+            brain_state['focus_level'] = "Highly Focused"
+
+        # Output the results
+        print("Brain State:\n")
+        for key, value in brain_state.items():
+            print(f"{key.capitalize()}: {value}")
+
+        return brain_state
 
 if __name__ == "__main__":
     analyzer = EEGAnalyzer()
